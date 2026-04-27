@@ -1,0 +1,157 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:display_name",
+ "creation": "2026-04-25 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "display_name",
+  "instance_name",
+  "column_break_top",
+  "phone_number",
+  "enabled",
+  "section_break_status",
+  "connection_status",
+  "last_status_check",
+  "section_break_qr",
+  "qr_html",
+  "section_break_users",
+  "assigned_users",
+  "section_break_internal",
+  "instance_id",
+  "instance_api_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "display_name",
+   "fieldtype": "Data",
+   "label": "Display Name",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "description": "Human-friendly label, e.g. 'Sales Number'. Used as the doc name."
+  },
+  {
+   "fieldname": "instance_name",
+   "fieldtype": "Data",
+   "label": "Instance Name (Evolution)",
+   "read_only": 1,
+   "description": "Auto-generated from display name. Used as the URL slug on Evolution."
+  },
+  {
+   "fieldname": "column_break_top",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "phone_number",
+   "fieldtype": "Data",
+   "label": "Phone Number",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "Connected WhatsApp number, fetched after pairing."
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1"
+  },
+  {
+   "fieldname": "section_break_status",
+   "fieldtype": "Section Break",
+   "label": "Connection"
+  },
+  {
+   "fieldname": "connection_status",
+   "fieldtype": "Select",
+   "options": "Pending\nAwaiting QR Scan\nConnecting\nConnected\nDisconnected\nError",
+   "label": "Connection Status",
+   "read_only": 1,
+   "default": "Pending",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "last_status_check",
+   "fieldtype": "Datetime",
+   "label": "Last Status Check",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_qr",
+   "fieldtype": "Section Break",
+   "label": "QR Code",
+   "depends_on": "eval:['Awaiting QR Scan','Connecting','Pending','Disconnected','Error'].includes(doc.connection_status)"
+  },
+  {
+   "fieldname": "qr_html",
+   "fieldtype": "HTML",
+   "label": "QR Code",
+   "options": "<div id='ew-qr-mount' class='text-center text-muted small'>Save the document to generate the QR code.</div>"
+  },
+  {
+   "fieldname": "section_break_users",
+   "fieldtype": "Section Break",
+   "label": "Assigned Users",
+   "description": "Users in this list can send WhatsApp messages from this number. Use the Actions menu to assign."
+  },
+  {
+   "fieldname": "assigned_users",
+   "fieldtype": "Table",
+   "label": "Assigned Users",
+   "options": "WhatsApp Number Assigned User"
+  },
+  {
+   "fieldname": "section_break_internal",
+   "fieldtype": "Section Break",
+   "label": "Internal",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "instance_id",
+   "fieldtype": "Data",
+   "label": "Instance ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "instance_api_key",
+   "fieldtype": "Password",
+   "label": "Instance API Key",
+   "read_only": 1,
+   "length": 200
+  }
+ ],
+ "links": [],
+ "modified": "2026-04-25 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Evolution Whatsapp",
+ "name": "WhatsApp Number",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "WhatsApp Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

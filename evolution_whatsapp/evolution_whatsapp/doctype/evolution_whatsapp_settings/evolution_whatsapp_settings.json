@@ -1,0 +1,70 @@
+{
+ "actions": [],
+ "creation": "2026-04-25 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "server_url",
+  "global_api_key",
+  "column_break_top",
+  "default_country_code",
+  "section_break_help",
+  "help_html"
+ ],
+ "fields": [
+  {
+   "fieldname": "server_url",
+   "fieldtype": "Data",
+   "label": "Server URL",
+   "description": "Full HTTPS URL of your Evolution API server, e.g. https://evolution.example.com",
+   "reqd": 1
+  },
+  {
+   "fieldname": "global_api_key",
+   "fieldtype": "Password",
+   "label": "Global API Key",
+   "description": "AUTHENTICATION_API_KEY from your Evolution server. Used for instance management only.",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_top",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "default_country_code",
+   "fieldtype": "Data",
+   "label": "Default Country Code",
+   "default": "91",
+   "description": "Default country code prepended when a 10-digit number is entered without one. e.g. 91 for India, 1 for US.",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_help",
+   "fieldtype": "Section Break",
+   "label": "Help"
+  },
+  {
+   "fieldname": "help_html",
+   "fieldtype": "HTML",
+   "options": "<div class='text-muted small'><p>Numbers are managed by users with the <b>WhatsApp Manager</b> role via <b>WhatsApp Number</b>. Each number is a separate Evolution instance shared with assigned users.</p><p>Powered by <a href='https://github.com/EvolutionAPI/evolution-api' target='_blank'>Evolution API</a>.</p></div>"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-04-25 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Evolution Whatsapp",
+ "name": "Evolution Whatsapp Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
