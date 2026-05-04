@@ -86,6 +86,11 @@ $(document).on("app_ready", function () {
                 frm.page.add_menu_item(__("Send WhatsApp"), function () {
                     open_whatsapp_dialog(frm);
                 }, /* permanent */ true);
+                // Move to the top of the three-dot dropdown.
+                const $menu = frm.page.menu;
+                $menu.prepend($menu.children("li").filter((_, el) =>
+                    $(el).find("a").text().trim() === __("Send WhatsApp")
+                ).first());
                 render_whatsapp_section(frm);
             },
         });
@@ -400,6 +405,10 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
                     frm.page.add_menu_item(__("Send WhatsApp"), function () {
                         open_whatsapp_dialog(frm);
                     }, true);
+                    const $menu = frm.page.menu;
+                    $menu.prepend($menu.children("li").filter((_, el) =>
+                        $(el).find("a").text().trim() === __("Send WhatsApp")
+                    ).first());
                 }
             } catch (e) { /* */ }
         },
