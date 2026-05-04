@@ -1,35 +1,41 @@
-"""Resolve recipient phone numbers from any DocType + normalize for Evolution.
+"""Resolve recipient phone numbers strictly from the Contact DocType.
 
-Resolution walk order:
-1. Direct phone fields on the document
-2. Contacts dynamically linked to the doc
-3. Addresses dynamically linked to the doc
-4. Party fields (customer/supplier/lead/employee) — recurse one level
+Resolution rule (per spec):
+- The only source of recipient numbers is the Contact DocType, accessed via
+  the Dynamic Link table on Contact pointing back to a *party* record.
+- The "party" is either:
+    1. The source document itself, when it IS a party-type doc (Customer,
+       Supplier, Lead, Job Applicant, Employee, Contact, etc.).
+    2. The party referenced by a known link field on the source document
+       (customer / supplier / lead / employee / applicant / party_name + party_type).
+- Address phones are NOT used.
+- Direct phone fields on the source document are NOT used.
+
+If the source doc IS a Contact, we return that Contact's own phones directly.
+
+Number normalization for Evolution lives in `normalize_for_evolution` — same
+contract as before: digits-only, country code prefixed for bare 10-digit input,
+no '+' anywhere in the output.
 """
 
 import re
 import frappe
 
 
-DIRECT_PHONE_FIELDS = (
-    "whatsapp_no",
-    "mobile_no",
-    "cell_number",
-    "personal_mobile",
-    "phone",
-    "contact_mobile",
-    "contact_no",
-    "phone_no",
-)
-
+# Party fields we'll follow from the source doc one level deep.
 PARTY_FIELDS = {
-    "customer": "Customer",
-    "supplier": "Supplier",
-    "lead": "Lead",
-    "employee": "Employee",
-    "applicant": "Job Applicant",
-    "contact": "Contact",
-    "party_name": None,  # paired with party_type
+    "customer":   "Customer",
+    "supplier":   "Supplier",
+    "lead":       "Lead",
+    "employee":   "Employee",
+    "applicant":  "Job Applicant",
+    "contact":    "Contact",
+    "party_name": None,  # paired with party_type field on the doc
+}
+
+# When the source doc itself IS one of these, treat it as the party.
+SELF_PARTY_DOCTYPES = {
+    "Customer", "Supplier", "Lead", "Employee", "Job Applicant",
 }
 
 
@@ -41,11 +47,11 @@ def normalize_for_evolution(number, country_code=None):
     """Return a digit-only number ready for Evolution.
 
     Rules:
-    - Strip everything except digits and a leading '+'
-    - If number starts with '+': drop the '+' and use the rest verbatim
-    - If 10 digits and no '+': prepend country_code (default 91)
-    - If 11+ digits: assume country code is already there, use verbatim
-    - If <10 digits: invalid → return empty string (caller should error)
+    - Strip everything except digits and a leading '+'.
+    - If number starts with '+': drop the '+', return the rest verbatim.
+    - If 10 digits and no '+': prepend country_code (default 91).
+    - If 11+ digits: assume country code is already there, use verbatim.
+    - If <10 digits: invalid → return empty string (caller should error).
     """
     if not number:
         return ""
@@ -79,64 +85,107 @@ def _clean_for_display(num):
     return n or None
 
 
-def _add(found, number, source):
-    cleaned = _clean_for_display(number)
-    if not cleaned:
-        return
-    if any(item["number"] == cleaned for item in found):
-        return
-    found.append({"number": cleaned, "source": source})
+def _contact_label(contact_row):
+    """Human-friendly label for the dialog: 'John Doe' or fall back to the contact ID."""
+    parts = [
+        (contact_row.get("first_name") or "").strip(),
+        (contact_row.get("last_name") or "").strip(),
+    ]
+    name = " ".join(p for p in parts if p)
+    return name or contact_row.get("name") or "Contact"
 
 
-def _from_doc_fields(doc, found):
-    for fname in DIRECT_PHONE_FIELDS:
-        if doc.get(fname):
-            _add(found, doc.get(fname), f"{doc.doctype} · {fname}")
+def _push_contact_numbers(contact_row, found, seen_numbers):
+    """Append mobile_no (preferred) and phone from a Contact row, deduped."""
+    label = _contact_label(contact_row)
+
+    for fieldname in ("mobile_no", "phone"):
+        raw = contact_row.get(fieldname)
+        cleaned = _clean_for_display(raw)
+        if not cleaned or cleaned in seen_numbers:
+            continue
+        seen_numbers.add(cleaned)
+        kind = "mobile" if fieldname == "mobile_no" else "phone"
+        found.append({
+            "number": cleaned,
+            "source": f"{label} · {kind}",
+            "contact": contact_row.get("name"),
+        })
 
 
-def _from_dynamic_links(doctype, name, found):
+def _contacts_linked_to(party_doctype, party_name):
+    """Return Contact rows dynamically linked to (party_doctype, party_name).
+
+    One DB hit, ordered by is_primary_contact desc to surface primary first.
+    """
+    if not (party_doctype and party_name):
+        return []
+
+    # Find all Contact parents with a Dynamic Link to this party.
+    contact_names = [
+        r.parent for r in frappe.get_all(
+            "Dynamic Link",
+            filters={
+                "link_doctype": party_doctype,
+                "link_name": party_name,
+                "parenttype": "Contact",
+            },
+            fields=["parent"],
+        )
+    ]
+    if not contact_names:
+        return []
+
+    # Fetch the Contact rows in one query, primary first.
     rows = frappe.get_all(
-        "Dynamic Link",
-        filters={"link_doctype": doctype, "link_name": name},
-        fields=["parent", "parenttype"],
+        "Contact",
+        filters={"name": ["in", contact_names]},
+        fields=["name", "first_name", "last_name", "mobile_no", "phone", "is_primary_contact"],
+        order_by="is_primary_contact desc, modified desc",
     )
-    for row in rows:
-        if row.parenttype == "Contact":
-            c = frappe.db.get_value("Contact", row.parent, ["mobile_no", "phone"], as_dict=True)
-            if c:
-                _add(found, c.mobile_no, f"Contact · {row.parent}")
-                _add(found, c.phone, f"Contact · {row.parent}")
-        elif row.parenttype == "Address":
-            a = frappe.db.get_value("Address", row.parent, ["phone"], as_dict=True)
-            if a:
-                _add(found, a.phone, f"Address · {row.parent}")
+    return rows
 
 
-def _from_party(doc, found, depth=0):
-    if depth > 1:
-        return
+def _self_contact(name):
+    """When the source doc IS a Contact, fetch its own row."""
+    return frappe.db.get_value(
+        "Contact", name,
+        ["name", "first_name", "last_name", "mobile_no", "phone"],
+        as_dict=True,
+    )
+
+
+def _party_targets(doc):
+    """Yield (doctype, name) tuples for every party we should follow from `doc`."""
+    # The doc itself might be a party.
+    if doc.doctype in SELF_PARTY_DOCTYPES:
+        yield doc.doctype, doc.name
+
+    # Walk known party link fields on the doc.
     for fname, default_dt in PARTY_FIELDS.items():
         val = doc.get(fname)
         if not val:
             continue
         if fname == "party_name":
-            party_doctype = doc.get("party_type")
-            if not party_doctype:
+            party_dt = doc.get("party_type")
+            if not party_dt:
                 continue
         else:
-            party_doctype = default_dt
-        if not party_doctype or not frappe.db.exists(party_doctype, val):
+            party_dt = default_dt
+        if not party_dt:
             continue
-        try:
-            party_doc = frappe.get_doc(party_doctype, val)
-        except Exception:
+        if not frappe.db.exists(party_dt, val):
             continue
-        _from_doc_fields(party_doc, found)
-        _from_dynamic_links(party_doctype, val, found)
+        yield party_dt, val
 
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 @frappe.whitelist()
 def resolve(doctype, name):
+    """Return a deduped list of {number, source, contact} entries for the given doc."""
     if not (doctype and name):
         return []
     if not frappe.db.exists(doctype, name):
@@ -146,7 +195,23 @@ def resolve(doctype, name):
 
     doc = frappe.get_doc(doctype, name)
     found = []
-    _from_doc_fields(doc, found)
-    _from_dynamic_links(doctype, name, found)
-    _from_party(doc, found)
+    seen_numbers = set()
+    seen_contacts = set()
+
+    # Special case: doc IS a Contact → use it directly, no party walk needed.
+    if doctype == "Contact":
+        c = _self_contact(name)
+        if c:
+            _push_contact_numbers(c, found, seen_numbers)
+        return found
+
+    # Otherwise, walk every party target and collect Contacts linked to them.
+    for party_dt, party_name in _party_targets(doc):
+        for contact_row in _contacts_linked_to(party_dt, party_name):
+            cname = contact_row.get("name")
+            if cname in seen_contacts:
+                continue
+            seen_contacts.add(cname)
+            _push_contact_numbers(contact_row, found, seen_numbers)
+
     return found
