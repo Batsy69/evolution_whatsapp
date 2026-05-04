@@ -4,7 +4,13 @@ Lifecycle:
     create (display_name) -> auto-slug instance_name
     after_insert -> POST /instance/create on Evolution -> store hash + qr
     user scans QR -> client polls -> connection_status flips to Connected
-    on_trash -> auto-logout + delete on Evolution
+    on_trash -> auto-logout + delete on Evolution (re-raised on failure to
+                keep Frappe and Evolution in sync)
+
+Permission model:
+    WhatsApp Manager / System Manager: full CRUD on every number.
+    Everyone else: read-only access, list filtered to numbers they're
+    listed in via the assigned_users child table.
 """
 
 import re
@@ -101,34 +107,36 @@ def after_insert(doc, method=None):
 
 
 def on_trash(doc, method=None):
-    """Best-effort: logout then delete the Evolution instance."""
+    """Best-effort logout, then delete on Evolution.
+
+    If the Evolution-side delete fails we re-raise, which causes Frappe to
+    roll back the doc deletion so the local record and the remote instance
+    stay in sync. No orphaned instances on Evolution.
+    """
     if not doc.instance_name:
         return
 
     api_key = doc.get_password("instance_api_key", raise_exception=False)
 
-    # 1. Try to logout (graceful)
+    # 1. Try to logout (graceful — already-disconnected, network blip, etc.)
     if api_key:
         try:
             evolution_api.logout_instance(doc.instance_name, api_key)
         except Exception:
-            # Not fatal — already disconnected, network blip, etc.
             frappe.log_error(title=f"Evolution logout failed (continuing): {doc.instance_name}")
 
-    # 2. Delete the instance — this we DO want to surface if it fails,
-    # otherwise we'd orphan an instance on Evolution.
+    # 2. Delete the instance — surface failure so the local doc rolls back.
     try:
         evolution_api.delete_instance(doc.instance_name, api_key)
     except Exception as e:
         frappe.log_error(title=f"Evolution delete failed: {doc.instance_name}")
-        # Re-raise so Frappe rolls back the doc deletion. User sees the error.
         frappe.throw(
             _("Could not delete the instance on Evolution: {0}. Doc not deleted.").format(str(e))
         )
 
 
 # ---------------------------------------------------------------------------
-# Permission & assignment helpers
+# Permission gating
 # ---------------------------------------------------------------------------
 
 def _can_manage(user=None):
@@ -142,6 +150,42 @@ def _can_manage(user=None):
 def _ensure_can_manage():
     if not _can_manage():
         frappe.throw(_("Only WhatsApp Manager or System Manager can perform this action"), frappe.PermissionError)
+
+
+def get_permission_query_conditions(user=None):
+    """List-view filter for WhatsApp Number.
+
+    Managers see everything (returns empty string). Everyone else sees only
+    numbers where they appear in the `assigned_users` child table.
+    """
+    user = user or frappe.session.user
+    if _can_manage(user):
+        return ""
+
+    safe_user = frappe.db.escape(user)
+    return (
+        "(`tabWhatsApp Number`.name IN ("
+        "SELECT u.parent FROM `tabWhatsApp Number Assigned User` u "
+        f"WHERE u.parenttype = 'WhatsApp Number' AND u.user = {safe_user}"
+        "))"
+    )
+
+
+def has_permission(doc, ptype="read", user=None):
+    """Per-doc permission check — same membership rule as the list filter.
+
+    Only governs `read`. Write/delete fall through to the standard role-based
+    permissions defined in whatsapp_number.json (Manager/System Manager only).
+    """
+    user = user or frappe.session.user
+    if _can_manage(user):
+        return True
+    if ptype != "read":
+        return False
+    return bool(frappe.db.exists(
+        "WhatsApp Number Assigned User",
+        {"parent": doc.name, "parenttype": "WhatsApp Number", "user": user},
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -216,14 +260,25 @@ def check_status(name):
 
 @frappe.whitelist()
 def disconnect(name):
+    """Logout the instance on Evolution and mark it Disconnected locally.
+
+    Surfaces failures (symmetric with on_trash). If Evolution can't be reached
+    or the logout fails, the local status stays untouched and the user sees
+    the actual error — preventing a desync where Frappe says "Disconnected"
+    but the WhatsApp session is still live.
+    """
     _ensure_can_manage()
     doc = frappe.get_doc("WhatsApp Number", name)
     api_key = doc.get_password("instance_api_key", raise_exception=False)
+
     if api_key:
         try:
             evolution_api.logout_instance(doc.instance_name, api_key)
-        except Exception:
+        except Exception as e:
             frappe.log_error(title=f"Disconnect failed for {doc.instance_name}")
+            frappe.throw(
+                _("Could not disconnect on Evolution: {0}. Status not changed.").format(str(e))
+            )
 
     frappe.db.set_value(
         "WhatsApp Number", name,
@@ -246,7 +301,7 @@ def assign_users(name, users):
             users = [u.strip() for u in users.split(",") if u.strip()]
     users = users or []
 
-    # De-dupe + filter to existing users
+    # De-dupe + filter to existing users.
     seen = set()
     cleaned = []
     for u in users:
@@ -261,7 +316,7 @@ def assign_users(name, users):
     doc.set("assigned_users", [])
     for u in cleaned:
         doc.append("assigned_users", {"user": u})
-    doc.flags.ignore_permissions = False  # respect WhatsApp Manager perm
+    doc.flags.ignore_permissions = False
     doc.save()
     return {"count": len(cleaned)}
 
@@ -272,10 +327,9 @@ def assign_users(name, users):
 
 @frappe.whitelist()
 def get_numbers_for_user(user=None):
-    """Return active, connected WhatsApp Numbers assigned to `user`."""
+    """Active, connected WhatsApp Numbers assigned to `user`."""
     user = user or frappe.session.user
 
-    # Find all enabled+connected numbers where this user appears in assigned_users.
     rows = frappe.db.sql(
         """
         SELECT n.name, n.display_name, n.phone_number, n.connection_status

@@ -1,33 +1,39 @@
 frappe.ui.form.on("WhatsApp Number", {
     refresh(frm) {
-        if (!frm.is_new()) {
-            // Status indicator
-            const indicator = {
-                "Connected": "green",
-                "Awaiting QR Scan": "orange",
-                "Connecting": "blue",
-                "Pending": "grey",
-                "Disconnected": "red",
-                "Error": "red",
-            }[frm.doc.connection_status] || "grey";
-            frm.page.set_indicator(__(frm.doc.connection_status || "Unknown"), indicator);
+        if (frm.is_new()) return;
 
-            // Action buttons
-            frm.add_custom_button(__("Assign Users"), () => open_assign_users_dialog(frm), __("Actions"));
+        // Status indicator (visible to everyone with read access).
+        const indicator = {
+            "Connected": "green",
+            "Awaiting QR Scan": "orange",
+            "Connecting": "blue",
+            "Pending": "grey",
+            "Disconnected": "red",
+            "Error": "red",
+        }[frm.doc.connection_status] || "grey";
+        frm.page.set_indicator(__(frm.doc.connection_status || "Unknown"), indicator);
 
-            if (["Awaiting QR Scan", "Connecting", "Pending", "Disconnected", "Error"].includes(frm.doc.connection_status)) {
-                frm.add_custom_button(__("Refresh QR"), () => refresh_qr(frm));
-                frm.add_custom_button(__("Check Status"), () => check_status(frm));
-                refresh_qr(frm, /* silent */ true);
-                start_polling(frm);
-            } else {
-                stop_polling(frm);
-            }
+        // Manager-only controls. Non-managers have read-only access and
+        // shouldn't see Assign / Disconnect / QR refresh.
+        if (!is_manager()) {
+            stop_polling(frm);
+            return;
+        }
 
-            if (frm.doc.connection_status === "Connected") {
-                frm.add_custom_button(__("Check Status"), () => check_status(frm));
-                frm.add_custom_button(__("Disconnect"), () => disconnect_number(frm), __("Actions"));
-            }
+        frm.add_custom_button(__("Assign Users"), () => open_assign_users_dialog(frm), __("Actions"));
+
+        if (["Awaiting QR Scan", "Connecting", "Pending", "Disconnected", "Error"].includes(frm.doc.connection_status)) {
+            frm.add_custom_button(__("Refresh QR"), () => refresh_qr(frm));
+            frm.add_custom_button(__("Check Status"), () => check_status(frm));
+            refresh_qr(frm, /* silent */ true);
+            start_polling(frm);
+        } else {
+            stop_polling(frm);
+        }
+
+        if (frm.doc.connection_status === "Connected") {
+            frm.add_custom_button(__("Check Status"), () => check_status(frm));
+            frm.add_custom_button(__("Disconnect"), () => disconnect_number(frm), __("Actions"));
         }
     },
 
@@ -35,6 +41,12 @@ frappe.ui.form.on("WhatsApp Number", {
         stop_polling(frm);
     },
 });
+
+
+function is_manager() {
+    const roles = (frappe.user_roles || frappe.boot.user.roles || []);
+    return roles.includes("WhatsApp Manager") || roles.includes("System Manager") || roles.includes("Administrator");
+}
 
 // --------------------------------------------------------------------------
 // QR + status
