@@ -1,10 +1,9 @@
 frappe.ui.form.on("WhatsApp Message", {
     refresh(frm) {
-        const indicator = {
-            "Sent": "green",
-            "Queued": "blue",
-            "Failed": "red",
-        }[frm.doc.status] || "grey";
-        frm.page.set_indicator(__(frm.doc.status || "Unknown"), indicator);
+        if (!frm.is_new() && frm.doc.status === "Failed") {
+            frm.set_intro(__("This message failed to send. See the Error field below."), "red");
+        } else if (!frm.is_new() && frm.doc.status === "Sent") {
+            frm.set_intro(__("Sent."), "green");
+        }
     },
 });
