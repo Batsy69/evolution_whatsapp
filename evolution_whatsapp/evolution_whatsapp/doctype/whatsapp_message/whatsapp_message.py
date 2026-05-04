@@ -466,10 +466,24 @@ def list_print_formats_for(reference_doctype):
 
     default_name = None
     try:
-        meta = frappe.get_meta(reference_doctype)
-        candidate = getattr(meta, "default_print_format", None)
-        if candidate and candidate in format_names:
-            default_name = candidate
+        # Customize Form stores defaults as Property Setters — check there first.
+        ps_value = frappe.db.get_value(
+            "Property Setter",
+            {
+                "doc_type": reference_doctype,
+                "property": "default_print_format",
+                "doctype_or_field": "DocType",
+            },
+            "value",
+        )
+        if ps_value and ps_value in format_names:
+            default_name = ps_value
+        else:
+            # Fall back to the meta attribute (covers DocType-level defaults).
+            meta = frappe.get_meta(reference_doctype)
+            candidate = getattr(meta, "default_print_format", None)
+            if candidate and candidate in format_names:
+                default_name = candidate
     except Exception:
         pass
 
