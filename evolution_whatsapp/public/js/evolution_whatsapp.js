@@ -234,7 +234,11 @@ function open_whatsapp_dialog(frm) {
         const numbers = rN.message || [];
         const candidates = rR.message || [];
         const existing_files = rF.message || [];
-        const print_format_data = rP.message || { default: null, formats: [] };
+        const pf_rows = rP.message || [];
+        const print_format_data = {
+            default: (pf_rows.find(p => p.is_default) || {}).name || null,
+            formats: pf_rows.map(p => p.name),
+        };
         const default_cc = rCC.message || "91";
 
         if (!numbers.length) {
