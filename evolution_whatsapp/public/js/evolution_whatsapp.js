@@ -86,11 +86,6 @@ $(document).on("app_ready", function () {
                 frm.page.add_menu_item(__("Send WhatsApp"), function () {
                     open_whatsapp_dialog(frm);
                 }, /* permanent */ true);
-                // Move to the top of the three-dot dropdown.
-                const $menu = frm.page.menu;
-                $menu.prepend($menu.children("li").filter((_, el) =>
-                    $(el).find("a").text().trim() === __("Send WhatsApp")
-                ).first());
                 render_whatsapp_section(frm);
             },
         });
@@ -319,6 +314,26 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
         });
     }
 
+    // ── Send document (above message) ────────────────────────────────────────
+    if (has_pf) {
+        fields.push({ fieldtype: "Section Break" }); // border hidden after render
+        if (pf_mode === "check") {
+            fields.push({
+                fieldtype: "Check",
+                fieldname: "attach_print_format",
+                label: __("Send document"),
+                default: 0,
+            });
+        } else {
+            fields.push({
+                fieldtype: "Select",
+                fieldname: "print_format",
+                label: __("Send document"),
+                options: ["", ...formats].join("\n"),
+            });
+        }
+    }
+
     // ── Message (full width, single line) ───────────────────────────────────
     fields.push({ fieldtype: "Section Break" }); // border hidden after render
     fields.push({
@@ -344,26 +359,6 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
         label: __("Upload new file"),
     });
 
-    // ── Send document (full width below files) ───────────────────────────────
-    if (has_pf) {
-        fields.push({ fieldtype: "Section Break" }); // border hidden after render
-        if (pf_mode === "check") {
-            fields.push({
-                fieldtype: "Check",
-                fieldname: "attach_print_format",
-                label: __("Send document"),
-                default: 0,
-            });
-        } else {
-            fields.push({
-                fieldtype: "Select",
-                fieldname: "print_format",
-                label: __("Send document"),
-                options: ["", ...formats].join("\n"),
-            });
-        }
-    }
-
     var dialog = new frappe.ui.Dialog({
         title: __("Send WhatsApp Message"),
         size: "small",
@@ -378,10 +373,6 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
                     frm.page.add_menu_item(__("Send WhatsApp"), function () {
                         open_whatsapp_dialog(frm);
                     }, true);
-                    const $menu = frm.page.menu;
-                    $menu.prepend($menu.children("li").filter((_, el) =>
-                        $(el).find("a").text().trim() === __("Send WhatsApp")
-                    ).first());
                 }
             } catch (e) { /* */ }
         },
@@ -389,12 +380,15 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
 
     dialog.show();
 
-    // Hide borders on unlabeled section breaks to remove visual dividers.
+    // Zero out spacing on unlabeled section breaks — target both the section
+    // itself and the bottom margin of the preceding section.
     dialog.$wrapper.find(".form-section").each(function () {
-        const label = $(this).find(".section-head").text().trim();
-        if (!label) {
-            $(this).find(".section-head").hide();
-            $(this).css({ "margin-top": "0", "padding-top": "4px", "border-top": "none" });
+        const $section = $(this);
+        if (!$section.find(".section-head").text().trim()) {
+            $section.find(".section-head").hide();
+            $section.css({ "margin-top": "0", "padding-top": "0", "border-top": "none" });
+            $section.find(".section-body").css({ "padding-top": "0", "margin-top": "0" });
+            $section.prev(".form-section").css("margin-bottom", "0");
         }
     });
 }
@@ -415,14 +409,14 @@ function render_send_to_html(default_cc, default_digits) {
             <label class="control-label" style="font-size:12px; margin-bottom:4px;">
                 ${__("Send to")}<span class="text-danger" style="margin-left:2px;">*</span>
             </label>
-            <div class="ew-sendto-wrap" style="display:flex; align-items:stretch; border:1px solid var(--input-border-color,#d1d8dd); border-radius:4px; overflow:hidden; background:var(--input-bg,#fff);">
-                <select class="ew-cc" style="border:0; border-right:1px solid var(--input-border-color,#d1d8dd); padding:5px 4px; background:var(--gray-50,#f8f9fa); font-size:12px; outline:none; width:62px; min-width:62px; flex-shrink:0;">
+            <div class="ew-sendto-wrap" style="display:flex; align-items:stretch; border:1px solid var(--input-border-color); border-radius:4px; overflow:hidden;">
+                <select class="ew-cc" style="border:0; border-right:1px solid var(--input-border-color); padding:5px 4px; background:var(--control-bg); color:var(--text-color); font-size:12px; outline:none; width:62px; min-width:62px; flex-shrink:0;">
                     ${cc_options}
                 </select>
                 <input class="ew-num" type="tel" inputmode="tel"
                     placeholder="${__("Number")}"
                     value="${frappe.utils.escape_html(default_digits || "")}"
-                    style="flex:1; border:0; padding:5px 8px; font-size:13px; outline:none; background:transparent; min-width:0;" />
+                    style="flex:1; border:0; padding:5px 8px; font-size:13px; outline:none; background:var(--control-bg); color:var(--text-color); min-width:0;" />
             </div>
         </div>
     `;
@@ -536,4 +530,3 @@ function fire_send(frm, doctype, docname, values, attached_files, instance_name,
         },
     });
 }
-
