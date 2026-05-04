@@ -7,10 +7,7 @@ frappe.ui.form.on("Evolution Whatsapp Settings", {
                 freeze_message: __("Pinging Evolution server..."),
                 callback: (r) => {
                     if (r.message && r.message.ok) {
-                        frappe.show_alert({
-                            message: __("Connected to Evolution server."),
-                            indicator: "green",
-                        });
+                        frappe.show_alert({ message: __("Connected"), indicator: "green" });
                     }
                 },
             });
