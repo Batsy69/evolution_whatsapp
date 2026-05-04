@@ -473,7 +473,13 @@ def list_print_formats_for(reference_doctype):
     except Exception:
         pass
 
-    return {"default": default_name, "formats": format_names}
+    # Return an enriched array so both old and new JS can consume it.
+    # Old JS: (rP.message || []).map(p => p.name)  → still works
+    # New JS: reads is_default to decide Check vs Select vs hidden
+    return [
+        {"name": n, "is_default": n == default_name}
+        for n in format_names
+    ]
 
 
 @frappe.whitelist()
