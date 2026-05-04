@@ -256,7 +256,6 @@ function open_whatsapp_dialog(frm) {
 
 
 function build_dialog(frm, doctype, docname, numbers, candidates, existing_files, pf_data, default_cc) {
-    // Send-from options: "Sales Number  ·  +91 8433953040"
     const send_from_options = numbers.map(n => {
         const phone = n.phone_number ? `  ·  ${n.phone_number}` : "";
         return `${n.display_name}${phone}|||${n.name}`;
@@ -265,7 +264,6 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
     const default_digits = candidates.length ? digits_only(candidates[0].number) : "";
     const default_cc_clean = String(default_cc || "91").replace(/\D/g, "") || "91";
 
-    // Resolve print format mode up front — needed to decide layout.
     const formats = pf_data.formats || [];
     const pf_default = pf_data.default || null;
     let pf_mode = "hidden";
@@ -287,7 +285,7 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
 
     const fields = [];
 
-    // ── Row 1: Send from (left) | Send to (right) ──────────────────────────
+    // ── Row 1: Send from (left) | Send to HTML (right) ──────────────────────
     fields.push({
         fieldtype: "Select",
         fieldname: "send_from",
@@ -303,10 +301,11 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
         options: render_send_to_html(default_cc_clean, default_digits),
     });
 
-    // ── Row 2: Other contacts (full width, only when 2+ candidates) ─────────
+    // ── Other contacts (full width, only when 2+ candidates) ────────────────
+    // Placed right after Send to — it's about picking the recipient.
     if (candidates.length > 1) {
         const opts = ["", ...candidates.map(c => `${c.number}  —  ${c.source}`)].join("\n");
-        fields.push({ fieldtype: "Section Break" });
+        fields.push({ fieldtype: "Section Break" }); // border hidden after render
         fields.push({
             fieldtype: "Select",
             fieldname: "candidate_picker",
@@ -315,32 +314,22 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
             change: function () {
                 const picked = dialog.get_value("candidate_picker");
                 if (!picked) return;
-                const num = picked.split("  —  ")[0];
-                set_send_to_digits(dialog, digits_only(num));
+                set_send_to_digits(dialog, digits_only(picked.split("  —  ")[0]));
             },
         });
     }
 
-    // ── Row 3: Message (full width) ──────────────────────────────────────────
-    fields.push({ fieldtype: "Section Break" });
+    // ── Message (full width, single line) ───────────────────────────────────
+    fields.push({ fieldtype: "Section Break" }); // border hidden after render
     fields.push({
-        fieldtype: "Small Text",
+        fieldtype: "Data",
         fieldname: "message",
         label: __("Message"),
     });
 
-    // ── Row 4: Attach files (left) | Print format + Upload (right) ───────────
-    //
-    // Four cases depending on what exists:
-    //   A  files + pf  → two columns: checklist left, pf+upload right
-    //   B  files only  → two columns: checklist left, upload right
-    //   C  pf only     → two columns: pf left, upload right
-    //   D  neither     → upload full width (no section header needed)
-
-    fields.push({ fieldtype: "Section Break" });
-
+    // ── Files: Attach files (left) | Upload new file (right) ────────────────
+    fields.push({ fieldtype: "Section Break", label: __("Files"), collapsible: 1 });
     if (has_files) {
-        // Left column: existing file checklist
         fields.push({
             fieldtype: "HTML",
             fieldname: "files_html",
@@ -349,50 +338,31 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
         });
         fields.push({ fieldtype: "Column Break" });
     }
-
-    if (has_pf && !has_files) {
-        // No files column — pf goes on the left, upload on the right.
-        if (pf_mode === "check") {
-            fields.push({
-                fieldtype: "Check",
-                fieldname: "attach_print_format",
-                label: __("Attach print format: {0}", [pf_resolved_for_check]),
-                default: 0,
-            });
-        } else {
-            fields.push({
-                fieldtype: "Select",
-                fieldname: "print_format",
-                label: __("Print Format"),
-                options: ["", ...formats].join("\n"),
-            });
-        }
-        fields.push({ fieldtype: "Column Break" });
-    } else if (has_pf && has_files) {
-        // Right column (after the Column Break from the files side).
-        if (pf_mode === "check") {
-            fields.push({
-                fieldtype: "Check",
-                fieldname: "attach_print_format",
-                label: __("Attach print format: {0}", [pf_resolved_for_check]),
-                default: 0,
-            });
-        } else {
-            fields.push({
-                fieldtype: "Select",
-                fieldname: "print_format",
-                label: __("Print Format"),
-                options: ["", ...formats].join("\n"),
-            });
-        }
-    }
-
-    // Upload — always in the rightmost column (or full width when no files/pf).
     fields.push({
         fieldtype: "Attach",
         fieldname: "ad_hoc_file",
         label: __("Upload new file"),
     });
+
+    // ── Send document (full width below files) ───────────────────────────────
+    if (has_pf) {
+        fields.push({ fieldtype: "Section Break" }); // border hidden after render
+        if (pf_mode === "check") {
+            fields.push({
+                fieldtype: "Check",
+                fieldname: "attach_print_format",
+                label: __("Send document"),
+                default: 0,
+            });
+        } else {
+            fields.push({
+                fieldtype: "Select",
+                fieldname: "print_format",
+                label: __("Send document"),
+                options: ["", ...formats].join("\n"),
+            });
+        }
+    }
 
     var dialog = new frappe.ui.Dialog({
         title: __("Send WhatsApp Message"),
@@ -403,7 +373,6 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
             do_send(frm, doctype, docname, values, dialog, send_from_options, pf_mode, pf_resolved_for_check);
         },
         on_hide() {
-            // Re-inject the menu item after dialog closes.
             try {
                 if (frm && frm.page) {
                     frm.page.add_menu_item(__("Send WhatsApp"), function () {
@@ -419,6 +388,15 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
     });
 
     dialog.show();
+
+    // Hide borders on unlabeled section breaks to remove visual dividers.
+    dialog.$wrapper.find(".form-section").each(function () {
+        const label = $(this).find(".section-head").text().trim();
+        if (!label) {
+            $(this).find(".section-head").hide();
+            $(this).css({ "margin-top": "0", "padding-top": "4px", "border-top": "none" });
+        }
+    });
 }
 
 
@@ -429,24 +407,22 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
 function render_send_to_html(default_cc, default_digits) {
     const cc_options = COMMON_COUNTRY_CODES.map(c => {
         const sel = c.code === default_cc ? " selected" : "";
-        return `<option value="${c.code}"${sel}>${c.label}</option>`;
+        return `<option value="${c.code}"${sel}>+${c.code}</option>`;
     }).join("");
 
-    // Inline CC + digits, styled to look like one cohesive field.
     return `
-        <div class="form-group">
-            <label class="control-label" style="font-size: 12px; padding-right: 0px; margin-bottom: 4px;">
+        <div class="form-group" style="margin-bottom:0;">
+            <label class="control-label" style="font-size:12px; margin-bottom:4px;">
                 ${__("Send to")}<span class="text-danger" style="margin-left:2px;">*</span>
             </label>
-            <div class="ew-sendto-wrap" style="display:flex; align-items:stretch; border:1px solid var(--input-border-color, #d1d8dd); border-radius:4px; overflow:hidden; background:var(--input-bg, #fff);">
-                <select class="ew-cc" style="border:0; border-right:1px solid var(--input-border-color, #d1d8dd); padding:6px 6px; background:var(--gray-50, #f8f9fa); font-size:12px; outline:none;">
+            <div class="ew-sendto-wrap" style="display:flex; align-items:stretch; border:1px solid var(--input-border-color,#d1d8dd); border-radius:4px; overflow:hidden; background:var(--input-bg,#fff);">
+                <select class="ew-cc" style="border:0; border-right:1px solid var(--input-border-color,#d1d8dd); padding:5px 4px; background:var(--gray-50,#f8f9fa); font-size:12px; outline:none; width:62px; min-width:62px; flex-shrink:0;">
                     ${cc_options}
                 </select>
-                <span class="ew-cc-sep" style="padding:6px 6px; color:var(--text-muted); user-select:none;">–</span>
                 <input class="ew-num" type="tel" inputmode="tel"
-                    placeholder="${__("Recipient digits")}"
+                    placeholder="${__("Number")}"
                     value="${frappe.utils.escape_html(default_digits || "")}"
-                    style="flex:1; border:0; padding:6px 8px; font-size:13px; outline:none; background:transparent;" />
+                    style="flex:1; border:0; padding:5px 8px; font-size:13px; outline:none; background:transparent; min-width:0;" />
             </div>
         </div>
     `;
@@ -560,3 +536,4 @@ function fire_send(frm, doctype, docname, values, attached_files, instance_name,
         },
     });
 }
+
