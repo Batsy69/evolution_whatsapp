@@ -63,8 +63,71 @@ def _file_basename(file_doc_name):
 
 def _guess_mime(filename):
     import mimetypes
+    import os
     if not filename:
         return "application/octet-stream"
+
+    # Explicit map takes priority over mimetypes.guess_type.
+    # Images and videos are listed so Evolution API gets the right mediatype.
+    # CAD/binary formats are forced to application/octet-stream so they are
+    # never mis-classified as images (some Linux systems register image/vnd.dxf).
+    _EXPLICIT = {
+        # ── images ──────────────────────────────────────────────
+        ".jpg":  "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png":  "image/png",
+        ".gif":  "image/gif",
+        ".webp": "image/webp",
+        ".bmp":  "image/bmp",
+        ".tiff": "image/tiff",
+        ".tif":  "image/tiff",
+        ".svg":  "image/svg+xml",
+        # ── video ────────────────────────────────────────────────
+        ".mp4":  "video/mp4",
+        ".mkv":  "video/x-matroska",
+        ".mov":  "video/quicktime",
+        ".avi":  "video/x-msvideo",
+        ".webm": "video/webm",
+        ".3gp":  "video/3gpp",
+        # ── audio ────────────────────────────────────────────────
+        ".mp3":  "audio/mpeg",
+        ".ogg":  "audio/ogg",
+        ".oga":  "audio/ogg",
+        ".opus": "audio/opus",
+        ".m4a":  "audio/mp4",
+        ".wav":  "audio/wav",
+        ".aac":  "audio/aac",
+        # ── documents ────────────────────────────────────────────
+        ".pdf":  "application/pdf",
+        ".doc":  "application/msword",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xls":  "application/vnd.ms-excel",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".ppt":  "application/vnd.ms-powerpoint",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".zip":  "application/zip",
+        ".rar":  "application/vnd.rar",
+        ".txt":  "text/plain",
+        ".csv":  "text/csv",
+        # ── CAD / engineering (force document — never image) ─────
+        ".dxf":  "application/octet-stream",
+        ".dwg":  "application/octet-stream",
+        ".step": "application/octet-stream",
+        ".stp":  "application/octet-stream",
+        ".iges": "application/octet-stream",
+        ".igs":  "application/octet-stream",
+        ".stl":  "application/octet-stream",
+        ".obj":  "application/octet-stream",
+        ".f3d":  "application/octet-stream",
+        ".ipt":  "application/octet-stream",
+        ".iam":  "application/octet-stream",
+    }
+
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in _EXPLICIT:
+        return _EXPLICIT[ext]
+
+    # Fallback for anything not in the map.
     mt, _enc = mimetypes.guess_type(filename)
     return mt or "application/octet-stream"
 
