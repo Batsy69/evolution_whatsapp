@@ -1,6 +1,0 @@
-include automate_subcontracting/templates/*.html
-include automate_subcontracting/templates/*.jinja
-recursive-include automate_subcontracting *.json
-recursive-include automate_subcontracting *.js
-recursive-include automate_subcontracting *.css
-recursive-include automate_subcontracting *.html
