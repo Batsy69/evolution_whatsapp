@@ -253,7 +253,8 @@ function open_whatsapp_dialog(frm) {
 function build_dialog(frm, doctype, docname, numbers, candidates, existing_files, pf_data, default_cc) {
     const send_from_options = numbers.map(n => {
         const phone = n.phone_number ? `  ·  ${n.phone_number}` : "";
-        return `${n.display_name}${phone}|||${n.name}`;
+        const status = n.connection_status !== "Connected" ? `  ⚠ ${n.connection_status}` : "";
+        return `${n.display_name}${phone}${status}|||${n.name}`;
     });
 
     const default_digits = candidates.length ? digits_only(candidates[0].number) : "";
@@ -294,6 +295,14 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
         fieldtype: "HTML",
         fieldname: "send_to",
         options: render_send_to_html(default_cc_clean, default_digits),
+    });
+
+    // ── Number status / QR area (full width, shown only when not Connected) ──
+    fields.push({ fieldtype: "Section Break" });
+    fields.push({
+        fieldtype: "HTML",
+        fieldname: "number_status_area",
+        options: "",
     });
 
     // ── Other contacts (full width, only when 2+ candidates) ────────────────
@@ -368,6 +377,7 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
             do_send(frm, doctype, docname, values, dialog, send_from_options, pf_mode, pf_resolved_for_check);
         },
         on_hide() {
+            stop_qr_poll();
             try {
                 if (frm && frm.page) {
                     frm.page.add_menu_item(__("Send WhatsApp"), function () {
@@ -380,6 +390,20 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
 
     dialog.show();
 
+    // Wire send_from change to status area.
+    dialog.fields_dict.send_from.$input.on("change", function () {
+        const label = dialog.get_value("send_from");
+        const pair = send_from_options.find(o => o.split("|||")[0] === label);
+        const instance_name = pair ? pair.split("|||")[1] : null;
+        const num = numbers.find(n => n.name === instance_name);
+        if (num) show_number_status(dialog, num);
+    });
+
+    // Check status of the default selected number immediately.
+    const default_instance = send_from_options[0].split("|||")[1];
+    const default_num = numbers.find(n => n.name === default_instance);
+    if (default_num) show_number_status(dialog, default_num);
+
     // Zero out spacing on unlabeled section breaks — target both the section
     // itself and the bottom margin of the preceding section.
     dialog.$wrapper.find(".form-section").each(function () {
@@ -390,6 +414,114 @@ function build_dialog(frm, doctype, docname, numbers, candidates, existing_files
             $section.find(".section-body").css({ "padding-top": "0", "margin-top": "0" });
             $section.prev(".form-section").css("margin-bottom", "0");
         }
+    });
+}
+
+
+// --------------------------------------------------------------------------
+// Number status area — QR display and connection state
+// --------------------------------------------------------------------------
+
+let _qr_poll_timer = null;
+
+function stop_qr_poll() {
+    if (_qr_poll_timer) {
+        clearInterval(_qr_poll_timer);
+        _qr_poll_timer = null;
+    }
+}
+
+function show_number_status(dialog, num) {
+    stop_qr_poll();
+
+    const $area = dialog.fields_dict.number_status_area.$wrapper;
+
+    if (num.connection_status === "Connected") {
+        $area.html("");
+        return;
+    }
+
+    if (num.connection_status === "Awaiting QR Scan") {
+        fetch_and_show_qr(dialog, num, $area);
+
+    } else if (num.connection_status === "Disconnected") {
+        $area.html(`
+            <div style="padding:8px 0; display:flex; align-items:center; gap:10px;">
+                <span class="indicator-pill red" style="font-size:11px;">${__("Disconnected")}</span>
+                <span style="font-size:12px; color:var(--text-color);">${frappe.utils.escape_html(num.display_name)}</span>
+                <button class="btn btn-xs btn-default ew-reconnect-btn">${__("Reconnect")}</button>
+            </div>
+        `);
+        $area.find(".ew-reconnect-btn").on("click", function () {
+            $(this).prop("disabled", true).text(__("Connecting…"));
+            fetch_and_show_qr(dialog, num, $area);
+        });
+
+    } else {
+        // Connecting or any other transient state.
+        $area.html(`
+            <div style="padding:8px 0;">
+                <span class="indicator-pill orange" style="font-size:11px;">${frappe.utils.escape_html(num.connection_status)}</span>
+                <span style="margin-left:8px; font-size:12px; color:var(--text-color);">
+                    ${__("'{0}' is currently {1}.", [num.display_name, num.connection_status])}
+                </span>
+            </div>
+        `);
+    }
+}
+
+
+function fetch_and_show_qr(dialog, num, $area) {
+    $area.html(`
+        <div style="text-align:center; padding:10px 0 4px;">
+            <div class="text-muted small" style="margin-bottom:8px;">
+                ${__("Scan with WhatsApp → Settings → Linked Devices")}
+            </div>
+            <div class="ew-qr-wrap" style="display:inline-block; padding:8px; border:1px solid var(--border-color); border-radius:6px; background:#fff;">
+                <div class="ew-qr-loading text-muted small">${__("Loading QR code…")}</div>
+            </div>
+        </div>
+    `);
+    frappe.call({
+        method: "evolution_whatsapp.evolution_whatsapp.doctype.whatsapp_number.whatsapp_number.get_qr",
+        args: { name: num.name },
+        silent: true,
+        callback: (r) => {
+            const b64 = r.message && r.message.base64;
+            if (!b64) {
+                $area.find(".ew-qr-wrap").html(`<div class="text-muted small">${__("Could not load QR. Please try again.")}</div>`);
+                return;
+            }
+            const src = b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`;
+            $area.find(".ew-qr-wrap").html(`<img src="${src}" style="width:200px; height:200px; display:block;">`);
+            num.connection_status = "Awaiting QR Scan";
+            // Poll until Connected.
+            _qr_poll_timer = setInterval(() => poll_qr_status(dialog, num, $area), 3000);
+        },
+    });
+}
+
+
+function poll_qr_status(dialog, num, $area) {
+    frappe.call({
+        method: "evolution_whatsapp.evolution_whatsapp.doctype.whatsapp_number.whatsapp_number.check_status",
+        args: { name: num.name },
+        silent: true,
+        callback: (r) => {
+            if (!r.message) return;
+            if (r.message.status === "Connected") {
+                stop_qr_poll();
+                num.connection_status = "Connected";
+                if (r.message.phone_number) num.phone_number = r.message.phone_number;
+                $area.html(`
+                    <div style="padding:8px 0; color: var(--text-color);">
+                        <span class="indicator-pill green" style="font-size:11px;">${__("Connected")}</span>
+                        <span style="margin-left:8px; font-size:12px;">${__("Ready to send.")}</span>
+                    </div>
+                `);
+                setTimeout(() => $area.html(""), 3000);
+            }
+        },
     });
 }
 
