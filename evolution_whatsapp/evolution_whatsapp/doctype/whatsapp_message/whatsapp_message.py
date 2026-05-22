@@ -216,7 +216,10 @@ def _record_success(doc, response):
     if msg_id:
         doc.db_set("evolution_message_id", msg_id, update_modified=False)
     try:
-        doc.db_set("evolution_response", json.dumps(response, default=str)[:140000], update_modified=False)
+        serialized = json.dumps(response, default=str)
+        if len(serialized) > 140000:
+            serialized = json.dumps({"truncated": True, "note": "Response exceeded 140000 chars", "partial": serialized[:139800]})
+        doc.db_set("evolution_response", serialized, update_modified=False)
     except Exception:
         pass
 
@@ -279,6 +282,9 @@ def send_whatsapp(
     if not instance:
         frappe.throw(_("Pick a WhatsApp number to send from"))
 
+    if message and len(message) > 4096:
+        frappe.throw(_("Message exceeds WhatsApp's 4096 character limit ({0} characters)").format(len(message)))
+
     user = frappe.session.user
     if not _user_can_send_from(user, instance):
         frappe.throw(_("You are not assigned to this WhatsApp number"), frappe.PermissionError)
@@ -305,6 +311,30 @@ def send_whatsapp(
         except Exception:
             attached_files = []
     attached_files = attached_files or []
+
+    # Fix 2: verify user has read permission on the source document.
+    if reference_doctype and reference_name:
+        if not frappe.has_permission(reference_doctype, "read", doc=reference_name):
+            frappe.throw(_("You do not have permission to send from this document"), frappe.PermissionError)
+
+    # Fix 3: verify each attached file is either attached to the reference doc
+    # or was uploaded by the current user — prevents sending arbitrary files.
+    if attached_files:
+        for file_name in attached_files:
+            f = frappe.db.get_value(
+                "File", file_name,
+                ["owner", "attached_to_doctype", "attached_to_name"],
+                as_dict=True,
+            )
+            if not f:
+                frappe.throw(_("File '{0}' not found").format(file_name), frappe.PermissionError)
+            is_attached_to_ref = (
+                f.attached_to_doctype == reference_doctype
+                and f.attached_to_name == reference_name
+            )
+            is_owned_by_user = (f.owner == user)
+            if not (is_attached_to_ref or is_owned_by_user):
+                frappe.throw(_("You do not have permission to attach file '{0}'").format(file_name), frappe.PermissionError)
 
     # Resolve the print format (if any).
     resolved_pf = _resolve_print_format(reference_doctype, print_format) if print_format else None
@@ -460,6 +490,13 @@ def _send_print_format_job(
         doc, number_doc = _get_job_doc(message_name)
         api_key = number_doc.get_password("instance_api_key")
 
+        # Guard: source doc may have been deleted after the job was queued.
+        if reference_doctype and reference_name and not frappe.db.exists(reference_doctype, reference_name):
+            _record_failure(doc, Exception(
+                f"Source document {reference_doctype} '{reference_name}' was deleted before the PDF could be generated."
+            ))
+            return
+
         pdf_bytes = frappe.get_print(
             doctype=reference_doctype, name=reference_name,
             print_format=print_format, letterhead=letterhead, as_pdf=True,
@@ -591,7 +628,7 @@ def list_messages_for(reference_doctype, reference_name, limit=10):
             "creation", "owner",
         ],
         order_by="creation desc",
-        limit=int(limit),
+        limit=int(limit) if str(limit).isdigit() else 10,
     )
 
     # Hydrate from-number/display_name from the linked WhatsApp Number, in one pass.
