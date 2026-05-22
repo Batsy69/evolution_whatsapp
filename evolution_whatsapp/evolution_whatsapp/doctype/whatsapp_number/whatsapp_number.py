@@ -41,14 +41,22 @@ def slugify_for_evolution(text):
 
 
 def _unique_instance_name(base):
-    """Ensure uniqueness across existing WhatsApp Numbers."""
+    """Ensure uniqueness across existing WhatsApp Numbers.
+
+    The check-then-insert is not atomic, so two concurrent creates with the
+    same display name could theoretically collide. The random fallback makes
+    that window practically impossible. A proper fix would be a DB unique
+    index on instance_name.
+    """
+    import random
     candidate = base
     suffix = 0
     while frappe.db.exists("WhatsApp Number", {"instance_name": candidate}):
         suffix += 1
         candidate = f"{base}-{suffix}"
         if suffix > 50:
-            frappe.throw(_("Could not allocate a unique instance name"))
+            candidate = f"{base}-{random.randint(10000, 99999)}"
+            break
     return candidate
 
 
@@ -99,7 +107,21 @@ def after_insert(doc, method=None):
     d.instance_id = instance.get("instanceId") or ""
     d.connection_status = "Awaiting QR Scan"
     d.flags.ignore_permissions = True
-    d.save()
+    try:
+        d.save()
+    except Exception:
+        # Save failed — delete the orphaned Evolution instance so local and
+        # remote stay in sync. Log but don't re-raise the cleanup error.
+        try:
+            evolution_api.delete_instance(doc.instance_name, api_key)
+        except Exception:
+            frappe.log_error(title=f"Evolution orphan cleanup failed: {doc.instance_name}")
+        frappe.db.set_value(
+            "WhatsApp Number", doc.name,
+            {"connection_status": "Error"},
+            update_modified=False,
+        )
+        raise
 
     qr_b64 = qrcode.get("base64") if isinstance(qrcode, dict) else None
     if qr_b64:
@@ -326,9 +348,9 @@ def assign_users(name, users):
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_numbers_for_user(user=None):
-    """Active, connected WhatsApp Numbers assigned to `user`."""
-    user = user or frappe.session.user
+def get_numbers_for_user():
+    """Active, connected WhatsApp Numbers assigned to the current user."""
+    user = frappe.session.user
 
     rows = frappe.db.sql(
         """
@@ -336,7 +358,7 @@ def get_numbers_for_user(user=None):
         FROM `tabWhatsApp Number` n
         INNER JOIN `tabWhatsApp Number Assigned User` u
             ON u.parent = n.name AND u.parenttype = 'WhatsApp Number'
-        WHERE n.enabled = 1 AND u.user = %s
+        WHERE n.enabled = 1 AND n.connection_status = 'Connected' AND u.user = %s
         ORDER BY n.display_name
         """,
         (user,),
