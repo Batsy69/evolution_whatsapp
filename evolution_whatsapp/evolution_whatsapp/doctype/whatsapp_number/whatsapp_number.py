@@ -210,13 +210,29 @@ def has_permission(doc, ptype="read", user=None):
     ))
 
 
+def _is_assigned_to(user, name):
+    """True if `user` is in the assigned_users child table of this WhatsApp Number."""
+    return bool(frappe.db.exists(
+        "WhatsApp Number Assigned User",
+        {"parent": name, "parenttype": "WhatsApp Number", "user": user},
+    ))
+
+
+def _ensure_can_access(name, user=None):
+    """Managers can access any number. Assigned users can access their own."""
+    user = user or frappe.session.user
+    if _can_manage(user) or _is_assigned_to(user, name):
+        return
+    frappe.throw(_("Not permitted"), frappe.PermissionError)
+
+
 # ---------------------------------------------------------------------------
 # Whitelisted RPCs
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
 def get_qr(name):
-    _ensure_can_manage()
+    _ensure_can_access(name)
     doc = frappe.get_doc("WhatsApp Number", name)
 
     cached = frappe.cache().get_value(f"ew_qr::{name}")
@@ -235,13 +251,21 @@ def get_qr(name):
 
     if base64:
         frappe.cache().set_value(f"ew_qr::{name}", base64, expires_in_sec=120)
+        # If the number was Disconnected, flip it to Awaiting QR Scan now
+        # that Evolution has issued a fresh QR.
+        if doc.connection_status == "Disconnected":
+            frappe.db.set_value(
+                "WhatsApp Number", name,
+                {"connection_status": "Awaiting QR Scan"},
+                update_modified=False,
+            )
 
     return {"base64": base64, "fresh": True}
 
 
 @frappe.whitelist()
 def check_status(name):
-    _ensure_can_manage()
+    _ensure_can_access(name)
     doc = frappe.get_doc("WhatsApp Number", name)
 
     api_key = doc.get_password("instance_api_key", raise_exception=False)
@@ -358,7 +382,7 @@ def get_numbers_for_user():
         FROM `tabWhatsApp Number` n
         INNER JOIN `tabWhatsApp Number Assigned User` u
             ON u.parent = n.name AND u.parenttype = 'WhatsApp Number'
-        WHERE n.enabled = 1 AND n.connection_status = 'Connected' AND u.user = %s
+        WHERE n.enabled = 1 AND u.user = %s
         ORDER BY n.display_name
         """,
         (user,),
