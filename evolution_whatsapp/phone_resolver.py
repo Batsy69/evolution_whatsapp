@@ -14,7 +14,7 @@ Resolution rule (per spec):
 If the source doc IS a Contact, we return that Contact's own phones directly.
 
 Number normalization for Evolution lives in `normalize_for_evolution` — same
-contract as before: digits-only, country code prefixed for bare 10-digit input,
+contract as before: digits-only, country code prefixed for bare local input,
 no '+' anywhere in the output.
 """
 
@@ -49,9 +49,13 @@ def normalize_for_evolution(number, country_code=None):
     Rules:
     - Strip everything except digits and a leading '+'.
     - If number starts with '+': drop the '+', return the rest verbatim.
-    - If 10 digits and no '+': prepend country_code (default 91).
-    - If 11+ digits: assume country code is already there, use verbatim.
-    - If <10 digits: invalid → return empty string (caller should error).
+      Use this for full international numbers (e.g. +971501234567).
+    - If 7+ digits and no '+': prepend country_code (default 91).
+      The dialog always supplies a country code, so the input is always
+      local digits — this covers all listed countries regardless of their
+      local number length (8 digits for SG, 9 for UAE/SA/AU/FR/LK, 10 for
+      IN/US/UK/PK/BD, 11 for CN, etc.).
+    - If <7 digits: invalid → return empty string (caller should error).
     """
     if not number:
         return ""
@@ -63,10 +67,7 @@ def normalize_for_evolution(number, country_code=None):
     if has_plus:
         return digits
 
-    if len(digits) >= 11:
-        return digits
-
-    if len(digits) == 10:
+    if len(digits) >= 7:
         cc = re.sub(r"\D", "", str(country_code or "91"))
         return f"{cc}{digits}"
 
